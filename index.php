@@ -42,9 +42,9 @@ function main_handler($event, $context)
     $context = json_decode(json_encode($context), true);
     $event1 = $event;
     if (strlen(json_encode($event1['body']))>500) $event1['body']=substr($event1['body'],0,strpos($event1['body'],'base64')+10) . '...Too Long!...' . substr($event1['body'],-50);
-    echo urldecode(json_encode($event1)) . '
+    echo urldecode(json_encode($event1, JSON_PRETTY_PRINT)) . '
  
-' . urldecode(json_encode($context)) . '
+' . urldecode(json_encode($context, JSON_PRETTY_PRINT)) . '
  
 ';
     unset($event1);
@@ -88,6 +88,8 @@ function main_handler($event, $context)
         $config['list_path'] = spurlencode($config['list_path'],'/') ;
     }
     if (empty($config['sitename'])) $config['sitename'] = '请在环境变量添加sitename';
+    $config['is_imgup_path'] = 0;
+    if (path_format('/'.path_format(urldecode($config['list_path'].$path)).'/')==path_format('/'.path_format($config['imgup_path']).'/')&&$config['imgup_path']!='') $config['is_imgup_path'] = 1;
     $_GET = $event['queryString'];
     $_SERVER['PHP_SELF'] = path_format($config['base_path'] . $path);
     $_SERVER['REMOTE_ADDR'] = $event['requestContext']['sourceIp'];
@@ -330,11 +332,24 @@ function list_files($path)
         $cache->save('access_token', $config['access_token'], $ret['expires_in'] - 60);
     }
 
-    if ($config['ajax']&&$_POST['action']=='del_upload_cache'&&substr($_POST['filename'],-4)=='.tmp') {
+    if ($config['ajax']) {
+        if ($_POST['action']=='del_upload_cache'&&substr($_POST['filename'],-4)=='.tmp') {
         // 无需登录即可删除.tmp后缀文件
-        $tmp = MSAPI('DELETE',path_format(path_format($config['list_path'] . path_format($path)) . '/' . spurlencode($_POST['filename']) ),'',$access_token);
-        return output($tmp['body'],$tmp['stat']);
-    } 
+            $tmp = MSAPI('DELETE',path_format(path_format($config['list_path'] . path_format($path)) . '/' . spurlencode($_POST['filename']) ),'',$access_token);
+            return output($tmp['body'],$tmp['stat']);
+        }
+        if ($_POST['action']=='uploaded_rename') {
+        // 无需登录即可重命名.scfupload后缀文件，filemd5为用户提交，可被构造，问题不大，以后处理
+            $oldname = spurlencode($_POST['filename']);
+            $ext = strtolower(substr($oldname, strrpos($oldname, '.')));
+            $oldname = path_format(path_format($config['list_path'] . path_format($path)) . '/' . $oldname . '.scfupload' );
+            $data = '{"name":"' . $_POST['filemd5'] . $ext . '"}';
+            echo $oldname .'<br>'. $data;
+            $tmp = MSAPI('PATCH',$oldname,$data,$config['access_token']);
+            return output($tmp['body'],$tmp['stat']);
+        }
+        if ($_POST['action']=='upbigfile') return bigfileupload($path);
+    }
     if ($config['admin']) {
         $tmp = adminoperate($path);
         if ($tmp['statusCode'] > 0) {
@@ -344,14 +359,10 @@ function list_files($path)
         }
     } else {
         if ($config['ajax']) return output('请<font color="red">刷新</font>页面后重新登录',401);
-        if (path_format('/'.path_format(urldecode($config['list_path'].$path)).'/')==path_format('/'.path_format($config['imgup_path']).'/')&&$config['imgup_path']!='') {
-            $html = guestupload($path);
-            if ($html!='') return $html;
-        }
     }
     $config['ishidden'] = 4;
     $config['ishidden'] = passhidden($path);
-    if (path_format('/'.path_format(urldecode($config['list_path'].$path)).'/')==path_format('/'.path_format($config['imgup_path']).'/')&&$config['imgup_path']!=''&&!$config['admin']) {
+    if ($config['is_imgup_path']&&!$config['admin']) {
         // 是图床目录且不是管理
         $files = json_decode('{"folder":{}}', true);
     } elseif ($config['ishidden']==4) {
@@ -359,7 +370,7 @@ function list_files($path)
     } else {
         if ($_GET['thumbnails']) if (in_array(strtolower(substr($path, strrpos($path, '.') + 1)), ['ico', 'bmp', 'gif', 'jpg', 'jpeg', 'jpe', 'jfif', 'tif', 'tiff', 'png', 'heic', 'webp'])) {
             return get_thumbnails_url($path);
-        } else return output('ico,bmp,gif,jpg,jpeg,jpe,jfif,tif,tiff,png,heic,webp',500);
+        } else return output('ico,bmp,gif,jpg,jpeg,jpe,jfif,tif,tiff,png,heic,webp',400);
         $files = fetch_files($path);
     }
     if (isset($files['file']) && !$is_preview) {
@@ -403,7 +414,7 @@ function adminform($name = '', $pass = '', $path = '')
 		  <div>
 		    <label>密码</label>
 		    <input name="password1" type="password"/>
-		    <input type="submit" value="查看">
+		    <input type="submit" value="登录">
           </div>
 	  </form>
       </center>
@@ -412,7 +423,7 @@ function adminform($name = '', $pass = '', $path = '')
     $html .= '</body></html>';
     return output($html,$statusCode);
 }
-
+/*
 function guestupload($path)
 {
     global $config;
@@ -443,6 +454,41 @@ function guestupload($path)
         return message('Please upload from source site!');
     }
 }
+*/
+function bigfileupload($path)
+{
+    global $config;
+    $path1 = path_format($config['list_path'] . path_format($path));
+    if (substr($path1,-1)=='/') $path1=substr($path1,0,-1);
+    if ($_POST['upbigfilename']!=''&&$_POST['filesize']>0) {
+        $fileinfo['name'] = $_POST['upbigfilename'];
+        if ($config['admin']) {
+            $fileinfo['size'] = $_POST['filesize'];
+            $fileinfo['lastModified'] = $_POST['lastModified'];
+            $filename = spurlencode( $fileinfo['name'] );
+            $cachefilename = '.' . $fileinfo['lastModified'] . '_' . $fileinfo['size'] . '_' . $filename . '.tmp';
+            $getoldupinfo=fetch_files(path_format($path . '/' . $cachefilename));
+        //echo json_encode($getoldupinfo, JSON_PRETTY_PRINT);
+            if (isset($getoldupinfo['file'])&&$getoldupinfo['size']<5120) {
+                $getoldupinfo_j = curl_request($getoldupinfo['@microsoft.graph.downloadUrl']);
+                $getoldupinfo = json_decode($getoldupinfo_j , true);
+            //微软的过期时间只有20分钟，其实不用看过期时间，我过了14个小时，用昨晚的链接还可以接着继续上传，微软临时文件只要还在就可以续
+                if ( json_decode( curl_request($getoldupinfo['uploadUrl']), true)['@odata.context']!='' ) return output($getoldupinfo_j);
+            }
+        } else {
+            $filename = spurlencode( $fileinfo['name'] ) . '.scfupload';
+        }
+        $response=MSAPI('createUploadSession',path_format($path1 . '/' . $filename),'{"item": { "@microsoft.graph.conflictBehavior": "fail"  }}',$config['access_token']);
+        $responsearry = json_decode($response['body'],true);
+        if (isset($responsearry['error'])) return output($response['body'], $response['stat']);
+        if ($config['admin']) {
+            $fileinfo['uploadUrl'] = $responsearry['uploadUrl'];
+        echo MSAPI('PUT', path_format($path1 . '/' . $cachefilename), json_encode($fileinfo, JSON_PRETTY_PRINT), $config['access_token'])['body'];
+        }
+        return output($response['body'], $response['stat']);
+    }
+    return output('error', 400);
+}
 
 function adminoperate($path)
 {
@@ -450,7 +496,7 @@ function adminoperate($path)
     $path1 = path_format($config['list_path'] . path_format($path));
     if (substr($path1,-1)=='/') $path1=substr($path1,0,-1);
     $tmparr['statusCode'] = 0;
-    if ($_POST['upbigfilename']!=''&&$_POST['filesize']>0) {
+    /*if ($_POST['upbigfilename']!=''&&$_POST['filesize']>0) {
         $fileinfo['name'] = $_POST['upbigfilename'];
         $fileinfo['size'] = $_POST['filesize'];
         $fileinfo['lastModified'] = $_POST['lastModified'];
@@ -470,7 +516,7 @@ function adminoperate($path)
         $fileinfo['uploadUrl'] = $responsearry['uploadUrl'];
         echo MSAPI('PUT', path_format($path1 . '/' . $cachefilename), json_encode($fileinfo, JSON_PRETTY_PRINT), $config['access_token'])['body'];
         return output($response['body'], $response['stat']);
-    }
+    }*/
     if ($_POST['rename_newname']!=$_POST['rename_oldname'] && $_POST['rename_newname']!='') {
         // 重命名
         $oldname = spurlencode($_POST['rename_oldname']);
@@ -758,17 +804,19 @@ function render_list($path, $files)
             </div>
             <div class="list-body-container">
 <?php
-    if (path_format('/'.path_format(urldecode($config['list_path'].$path)).'/')==path_format('/'.path_format($config['imgup_path']).'/')&&$config['imgup_path']!=''&&!$config['admin']) { ?>
+    if ($config['is_imgup_path']&&!$config['admin']) { ?>
                 <div id="upload_div" style="margin:10px">
                 <center>
-                    <form action="" method="POST">
+                    <!--<form action="" method="POST">
                     <input id="upload_content" type="hidden" name="guest_upload_filecontent">
                     <input id="upload_file" type="file" name="upload_filename" onchange="base64upfile()">
                     <input type="submit" value="上传">文件大小<4M，不然传输失败！
-                    </form>
+                    </form>-->
+                    <input id="upload_file" type="file" name="upload_filename">
+                    <input id="upload_submit" onclick="preup();" value="上传" type="button">
                 <center>
                 </div>
-<?php } else { 
+<?php } else {
         if ($config['ishidden']<4) {
             if (isset($files['error'])) {
                     echo '<div style="margin:8px;">' . $files['error']['message'] . '</div>';
@@ -943,7 +991,7 @@ function render_list($path, $files)
                 </form>';
                         echo $prepagenext;
                     }
-                    if ($config['admin']) { ?>
+                    if ($config['is_imgup_path'] || $config['admin']) { ?>
                 <div id="upload_div" style="margin:0 0 16px 0">
                 <center>
                     <input id="upload_file" type="file" name="upload_filename" multiple="multiple">
@@ -1077,7 +1125,7 @@ function render_list($path, $files)
 	            <form action="<?php echo $_GET['preview']?'?preview&':'?';?>admin" method="post">
 		        <label>密码</label>
 		        <input id="login_input" name="password1" type="password"/>
-		        <input type="submit" value="查看">
+		        <input type="submit" value="登录">
 	            </form>
             </center>
         </div>
@@ -1089,6 +1137,7 @@ function render_list($path, $files)
 
 <link rel="stylesheet" href="//unpkg.zhimg.com/github-markdown-css@3.0.1/github-markdown.css">
 <script type="text/javascript" src="//unpkg.zhimg.com/marked@0.6.2/marked.min.js"></script>
+<?php if (isset($files['folder']) && $config['is_imgup_path']) { ?><script type="text/javascript" src="//cdn.bootcss.com/spark-md5/3.0.0/spark-md5.min.js"></script><?php } ?>
 <script type="text/javascript">
     var root = '<?php echo $config["base_path"]; ?>';
     var sort=0;
@@ -1344,15 +1393,203 @@ function render_list($path, $files)
         document.getElementById('mask').style.display='none';
     }
 <?php }
-    if (path_format('/'.path_format(urldecode($config['list_path'].$path)).'/')==path_format('/'.path_format($config['imgup_path']).'/')&&$config['imgup_path']!=''&&!$config['admin']) { //当前是图床目录时 ?>
-    function base64upfile() {
-        var $file=document.getElementById('upload_file').files[0];
-        var $reader = new FileReader();
-        $reader.onloadend=function(e) {
-            var $data=$reader.result;
-            document.getElementById('upload_content').value=$data;
+    if (isset($files['folder']) && ($config['is_imgup_path'] || $config['admin'])) { //上传 ?>
+    function uploadbuttonhide() {
+        document.getElementById('upload_submit').disabled='disabled';
+        document.getElementById('upload_file').disabled='disabled';
+        document.getElementById('upload_submit').style.display='none';
+        document.getElementById('upload_file').style.display='none';
+    }
+    function uploadbuttonshow() {
+        document.getElementById('upload_file').disabled='';
+        document.getElementById('upload_submit').disabled='';
+        document.getElementById('upload_submit').style.display='';
+        document.getElementById('upload_file').style.display='';
+    }
+    function preup() {
+        uploadbuttonhide();
+        var files=document.getElementById('upload_file').files;
+        var table1=document.createElement('table');
+        document.getElementById('upload_div').appendChild(table1);
+        table1.setAttribute('class','list-table');
+        var timea=new Date().getTime();
+        var i=0;
+        getuplink(i);
+        function getuplink(i) {
+            var file=files[i];
+            var tr1=document.createElement('tr');
+            table1.appendChild(tr1);
+            tr1.setAttribute('data-to',1);
+            var td1=document.createElement('td');
+            tr1.appendChild(td1);
+            td1.setAttribute('style','width:30%');
+            td1.setAttribute('id','upfile_td1_'+timea+'_'+i);
+            td1.innerHTML=file.name+'<br>'+size_format(file.size);
+            var td2=document.createElement('td');
+            tr1.appendChild(td2);
+            td2.setAttribute('id','upfile_td2_'+timea+'_'+i);
+            td2.innerHTML='获取链接 ...';
+            if (file.size>15*1024*1024*1024) {
+                td2.innerHTML='<font color="red">大于15G，终止上传。</font>';
+                uploadbuttonshow();
+                return;
+            }
+            var xhr1 = new XMLHttpRequest();
+            xhr1.open("POST", '');
+            xhr1.setRequestHeader('x-requested-with','XMLHttpRequest');
+            xhr1.send('action=upbigfile&upbigfilename='+ encodeURIComponent(file.name) +'&filesize='+ file.size +'&lastModified='+ file.lastModified);
+            xhr1.onload = function(e){
+                td2.innerHTML='<font color="red">'+xhr1.responseText+'</font>';
+                if (xhr1.status==200) {
+                    var html=JSON.parse(xhr1.responseText);
+                    if (!html['uploadUrl']) {
+                        td2.innerHTML='<font color="red">'+xhr1.responseText+'</font><br>';
+                        uploadbuttonshow();
+                    } else {
+                        td2.innerHTML='开始上传 ...';
+                        binupfile(file,html['uploadUrl'],timea+'_'+i);
+                    }
+                }
+                if (i<files.length-1) {
+                    i++;
+                    getuplink(i);
+                }
+            }
         }
-        $reader.readAsDataURL($file);
+    }
+    function size_format(num) {
+        if (num>1024) {
+            num=num/1024;
+        } else {
+            return num.toFixed(2) + ' B';
+        }
+        if (num>1024) {
+            num=num/1024;
+        } else {
+            return num.toFixed(2) + ' KB';
+        }
+        if (num>1024) {
+            num=num/1024;
+        } else {
+            return num.toFixed(2) + ' MB';
+        }
+        return num.toFixed(2) + ' GB';
+    }
+    function binupfile(file,url,tdnum){
+        var label=document.getElementById('upfile_td2_'+tdnum);
+        var reader = new FileReader();
+        var StartStr='';
+        var MiddleStr='';
+        var StartTime;
+        var EndTime;
+        var newstartsize = 0;
+        if(!!file){
+            var asize=0;
+            var totalsize=file.size;
+            var xhr2 = new XMLHttpRequest();
+            xhr2.open("GET", url);
+                    //xhr2.setRequestHeader('x-requested-with','XMLHttpRequest');
+            xhr2.send(null);
+            xhr2.onload = function(e){
+                if (xhr2.status==200) {
+                    var html=JSON.parse(xhr2.responseText);
+                    var a=html['nextExpectedRanges'][0];
+                    asize=Number( a.slice(0,a.indexOf("-")) );
+                    StartTime = new Date();
+                    newstartsize = asize;
+                    if (asize==0) {
+                        StartStr='开始于：' +StartTime.toLocaleString()+'<br>' ;
+                    } else {
+                        StartStr='上次上传'+size_format(asize)+ '<br>本次开始于：' +StartTime.toLocaleString()+'<br>' ;
+                    }
+                    var chunksize=5*1024*1024; // 每小块上传大小，最大60M，微软建议10M
+                    if (totalsize>200*1024*1024) chunksize=10*1024*1024;
+                    function readblob(start) {
+                        var end=start+chunksize;
+                        var blob = file.slice(start,end);
+                        reader.readAsArrayBuffer(blob);
+                    }
+                    readblob(asize);
+                    <?php if (!$config['admin']) { ?>var spark = new SparkMD5.ArrayBuffer();<?php } ?>
+                    reader.onload = function(e){
+                        var binary = this.result;
+                        <?php if (!$config['admin']) { ?>spark.append(binary);<?php } ?>
+                        var xhr = new XMLHttpRequest();
+                        xhr.open("PUT", url, true);
+                        //xhr.setRequestHeader('x-requested-with','XMLHttpRequest');
+                        bsize=asize+e.loaded-1;
+                        xhr.setRequestHeader('Content-Range', 'bytes ' + asize + '-' + bsize +'/'+ totalsize);
+                        xhr.upload.onprogress = function(e){
+                            if (e.lengthComputable) {
+                                var tmptime = new Date();
+                                var tmpspeed = e.loaded*1000/(tmptime.getTime()-C_starttime.getTime());
+                                var remaintime = (totalsize-asize-e.loaded)/tmpspeed;
+                                label.innerHTML=StartStr+'已经上传 ' +size_format(asize+e.loaded)+ ' / '+size_format(totalsize) + ' = ' + ((asize+e.loaded)*100/totalsize).toFixed(2) + '% 平均速度：'+size_format((asize+e.loaded-newstartsize)*1000/(tmptime.getTime()-StartTime.getTime()))+'/s<br>即时速度 '+size_format(tmpspeed)+'/s 预计还要 '+remaintime.toFixed(1)+'s';
+                            }
+                        }
+                        var C_starttime = new Date();
+                        xhr.onload = function(e){
+                            if (xhr.status<500) {
+                            var response=JSON.parse(xhr.responseText);
+                            if (response['size']>0) {
+                                // 有size说明是最终返回，上传结束
+                                var xhr3 = new XMLHttpRequest();
+                                xhr3.open("POST", '');
+                                xhr3.setRequestHeader('x-requested-with','XMLHttpRequest');
+<?php if (!$config['admin']) { ?>
+                                var filemd5 = spark.end();
+                                xhr3.send('action=uploaded_rename&filename='+encodeURIComponent(file.name)+'&filemd5='+filemd5);
+                                xhr3.onload = function(e){
+                                    console.log(xhr3.responseText+','+xhr3.status);
+                                    var filename;
+                                    if (xhr3.status==200) filename = JSON.parse(xhr3.responseText)['name'];
+                                    if (xhr3.status==409) filename = filemd5 + file.name.substr(file.name.indexOf('.'));
+                                    if (filename=='') { alert('可能出错，重新上传'); return; }
+                                    var lasturl = location.href;
+                                    if (lasturl.substr(lasturl.length-1)!='/') lasturl += '/';
+                                    lasturl += filename + '?preview';
+                                    //alert(lasturl);
+                                    window.location = lasturl;
+                                }
+<?php } else { ?>
+                                xhr3.send('action=del_upload_cache&filename=.'+file.lastModified+ '_' +file.size+ '_' +encodeURIComponent(file.name)+'.tmp');
+                                xhr3.onload = function(e){
+                                    console.log(xhr3.responseText+','+xhr3.status);
+                                }
+<?php } ?>
+                                EndTime=new Date();
+                                MiddleStr = '结束于：'+EndTime.toLocaleString()+'<br>';
+                                if (newstartsize==0) {
+                                    MiddleStr += '平均速度：'+size_format(totalsize*1000/(EndTime.getTime()-StartTime.getTime()))+'/s<br>';
+                                } else {
+                                    MiddleStr += '本次平均速度：'+size_format((totalsize-newstartsize)*1000/(EndTime.getTime()-StartTime.getTime()))+'/s<br>';
+                                }
+                                document.getElementById('upfile_td1_'+tdnum).innerHTML='<font color="green">'+document.getElementById('upfile_td1_'+tdnum).innerHTML+'<br>上传完成</font>';
+                                label.innerHTML=StartStr+MiddleStr;
+                                uploadbuttonshow();
+                                <?php if ($config['admin']) { ?>addelement(response);<?php } ?>
+                            } else {
+                                if (!response['nextExpectedRanges']) {
+                                    label.innerHTML='<font color="red">'+xhr.responseText+'</font><br>';
+                                } else {
+                                    var a=response['nextExpectedRanges'][0];
+                                    asize=Number( a.slice(0,a.indexOf("-")) );
+                                    readblob(asize);
+                                }
+                            } } else readblob(asize);
+                        }
+                        xhr.send(binary);
+                    }
+                } else {
+                    if (window.location.pathname.indexOf('%23')>0||file.name.indexOf('%23')>0) {
+                        label.innerHTML='<font color="red">目录或文件名含有#，上传失败。</font>';
+                    } else {
+                        label.innerHTML='<font color="red">'+xhr2.responseText+'</font>';
+                    }
+                    uploadbuttonshow();
+                }
+            }
+        }
     }
 <?php }
     if ($config['admin']) { //管理登录后 ?>
@@ -1472,23 +1709,23 @@ function render_list($path, $files)
         tr1.appendChild(td3);
     }
     //获取指定form中的所有的<input>对象 
-    function getElements(formId) { 
-        var form = document.getElementById(formId); 
-        var elements = new Array(); 
-        var tagElements = form.getElementsByTagName('input'); 
-        for (var j = 0; j < tagElements.length; j++){ 
-            elements.push(tagElements[j]); 
-        } 
-        var tagElements = form.getElementsByTagName('select'); 
-        for (var j = 0; j < tagElements.length; j++){ 
-            elements.push(tagElements[j]); 
-        } 
-        var tagElements = form.getElementsByTagName('textarea'); 
-        for (var j = 0; j < tagElements.length; j++){ 
-            elements.push(tagElements[j]); 
+    function getElements(formId) {
+        var form = document.getElementById(formId);
+        var elements = new Array();
+        var tagElements = form.getElementsByTagName('input');
+        for (var j = 0; j < tagElements.length; j++){
+            elements.push(tagElements[j]);
         }
-        return elements; 
-    } 
+        var tagElements = form.getElementsByTagName('select');
+        for (var j = 0; j < tagElements.length; j++){
+            elements.push(tagElements[j]);
+        }
+        var tagElements = form.getElementsByTagName('textarea');
+        for (var j = 0; j < tagElements.length; j++){
+            elements.push(tagElements[j]);
+        }
+        return elements;
+    }
     //组合URL 
     function serializeElement(element) { 
         var method = element.tagName.toLowerCase(); 
@@ -1511,7 +1748,7 @@ function render_list($path, $files)
                     parameter = [element.name, element.value]; 
                 }
                 break;    
-        } 
+        }
         if (parameter) { 
             var key = encodeURIComponent(parameter[0]); 
             if (key.length == 0) return; 
@@ -1520,10 +1757,10 @@ function render_list($path, $files)
             var results = []; 
             for (var i = 0; i < values.length; i++) { 
                 results.push(key + '=' + encodeURIComponent(values[i])); 
-            } 
+            }
             return results.join('&'); 
-        } 
-    } 
+        }
+    }
     //调用方法  
     function serializeForm(formId) { 
         var elements = getElements(formId); 
@@ -1535,184 +1772,6 @@ function render_list($path, $files)
             } 
         } 
         return queryComponents.join('&'); 
-    } 
-    function uploadbuttonhide() {
-        document.getElementById('upload_submit').disabled='disabled';
-        document.getElementById('upload_file').disabled='disabled';
-        document.getElementById('upload_submit').style.display='none';
-        document.getElementById('upload_file').style.display='none';
-    }
-    function uploadbuttonshow() {
-        document.getElementById('upload_file').disabled='';
-        document.getElementById('upload_submit').disabled='';
-        document.getElementById('upload_submit').style.display='';
-        document.getElementById('upload_file').style.display='';
-    }
-    function preup() {
-        uploadbuttonhide();
-        var files=document.getElementById('upload_file').files;
-        var table1=document.createElement('table');
-        document.getElementById('upload_div').appendChild(table1);
-        table1.setAttribute('class','list-table');
-        var timea=new Date().getTime();
-        var i=0;
-        getuplink(i);
-        function getuplink(i) {
-            var file=files[i];
-            var tr1=document.createElement('tr');
-            table1.appendChild(tr1);
-            tr1.setAttribute('data-to',1);
-            var td1=document.createElement('td');
-            tr1.appendChild(td1);
-            td1.setAttribute('style','width:30%');
-            td1.setAttribute('id','upfile_td1_'+timea+'_'+i);
-            td1.innerHTML=file.name+'<br>'+size_format(file.size);
-            var td2=document.createElement('td');
-            tr1.appendChild(td2);
-            td2.setAttribute('id','upfile_td2_'+timea+'_'+i);
-            td2.innerHTML='获取链接 ...';
-            if (file.size>15*1024*1024*1024) {
-                td2.innerHTML='<font color="red">大于15G，终止上传。</font>';
-                uploadbuttonshow();
-                return;
-            }
-            var xhr1 = new XMLHttpRequest();
-            xhr1.open("POST", '');
-            xhr1.setRequestHeader('x-requested-with','XMLHttpRequest');
-            xhr1.send('upbigfilename='+ encodeURIComponent(file.name) +'&filesize='+ file.size +'&lastModified='+ file.lastModified);
-            xhr1.onload = function(e){
-                td2.innerHTML='<font color="red">'+xhr1.responseText+'</font>';
-                if (xhr1.status==200) {
-                    var html=JSON.parse(xhr1.responseText);
-                    if (!html['uploadUrl']) {
-                        td2.innerHTML='<font color="red">'+xhr1.responseText+'</font><br>';
-                        uploadbuttonshow();
-                    } else {
-                        td2.innerHTML='开始上传 ...';
-                        binupfile(file,html['uploadUrl'],timea+'_'+i);
-                    }
-                }
-                if (i<files.length-1) {
-                    i++;
-                    getuplink(i);
-                }
-            }
-        }
-    }
-    function size_format(num) {
-        if (num>1024) {
-            num=num/1024;
-        } else {
-            return num.toFixed(2) + ' B';
-        }
-        if (num>1024) {
-            num=num/1024;
-        } else {
-            return num.toFixed(2) + ' KB';
-        }
-        if (num>1024) {
-            num=num/1024;
-        } else {
-            return num.toFixed(2) + ' MB';
-        }
-        return num.toFixed(2) + ' GB';
-    }
-    function binupfile(file,url,tdnum){
-        var label=document.getElementById('upfile_td2_'+tdnum);
-        var reader = new FileReader();
-        var StartStr='';
-        var MiddleStr='';
-        var StartTime;
-        var EndTime;
-        var newstartsize = 0;
-        if(!!file){
-            var asize=0;
-            var totalsize=file.size;
-            var xhr2 = new XMLHttpRequest();
-            xhr2.open("GET", url);
-                    //xhr2.setRequestHeader('x-requested-with','XMLHttpRequest');
-            xhr2.send(null);
-            xhr2.onload = function(e){
-                if (xhr2.status==200) {
-                    var html=JSON.parse(xhr2.responseText);
-                    var a=html['nextExpectedRanges'][0];
-                    asize=Number( a.slice(0,a.indexOf("-")) );
-                    StartTime = new Date();
-                    newstartsize = asize;
-                    if (asize==0) {
-                        StartStr='开始于：' +StartTime.toLocaleString()+'<br>' ;
-                    } else {
-                        StartStr='上次上传'+size_format(asize)+ '<br>本次开始于：' +StartTime.toLocaleString()+'<br>' ;
-                    }
-                    var chunksize=5*1024*1024; // 每小块上传大小，最大60M，微软建议10M
-                    if (totalsize>200*1024*1024) chunksize=10*1024*1024;
-                    function readblob(start) {
-                        var end=start+chunksize;
-                        var blob = file.slice(start,end);
-                        reader.readAsArrayBuffer(blob);
-                    }
-                    readblob(asize);
-                    reader.onload = function(e){
-                        var binary = this.result;
-                        var xhr = new XMLHttpRequest();
-                        xhr.open("PUT", url, true);
-                        //xhr.setRequestHeader('x-requested-with','XMLHttpRequest');
-                        bsize=asize+e.loaded-1;
-                        xhr.setRequestHeader('Content-Range', 'bytes ' + asize + '-' + bsize +'/'+ totalsize);
-                        xhr.upload.onprogress = function(e){
-                            if (e.lengthComputable) {
-                                var tmptime = new Date();
-                                var tmpspeed = e.loaded*1000/(tmptime.getTime()-C_starttime.getTime());
-                                var remaintime = (totalsize-asize-e.loaded)/tmpspeed;
-                                label.innerHTML=StartStr+'已经上传 ' +size_format(asize+e.loaded)+ ' / '+size_format(totalsize) + ' = ' + ((asize+e.loaded)*100/totalsize).toFixed(2) + '% 平均速度：'+size_format((asize+e.loaded-newstartsize)*1000/(tmptime.getTime()-StartTime.getTime()))+'/s<br>即时速度 '+size_format(tmpspeed)+'/s 预计还要 '+remaintime.toFixed(1)+'s';
-                            }
-                        }
-                        var C_starttime = new Date();
-                        xhr.onload = function(e){
-                            if (xhr.status<500) {
-                            var response=JSON.parse(xhr.responseText);
-                            if (response['size']>0) {
-                                // 有size说明是最终返回，上传结束
-                                var xhr3 = new XMLHttpRequest();
-                                xhr3.open("POST", '');
-                                xhr3.setRequestHeader('x-requested-with','XMLHttpRequest');
-                                xhr3.send('action=del_upload_cache&filename=.'+file.lastModified+ '_' +file.size+ '_' +encodeURIComponent(file.name)+'.tmp');
-                                xhr3.onload = function(e){
-                                    console.log(xhr3.responseText+','+xhr3.status);
-                                }
-                                EndTime=new Date();
-                                MiddleStr = '结束于：'+EndTime.toLocaleString()+'<br>';
-                                if (newstartsize==0) {
-                                    MiddleStr += '平均速度：'+size_format(totalsize*1000/(EndTime.getTime()-StartTime.getTime()))+'/s<br>';
-                                } else {
-                                    MiddleStr += '本次平均速度：'+size_format((totalsize-newstartsize)*1000/(EndTime.getTime()-StartTime.getTime()))+'/s<br>';
-                                }
-                                document.getElementById('upfile_td1_'+tdnum).innerHTML='<font color="green">'+document.getElementById('upfile_td1_'+tdnum).innerHTML+'<br>上传完成</font>';
-                                label.innerHTML=StartStr+MiddleStr;
-                                uploadbuttonshow();
-                                addelement(response);
-                            } else {
-                                if (!response['nextExpectedRanges']) {
-                                    label.innerHTML='<font color="red">'+xhr.responseText+'</font><br>';
-                                } else {
-                                    var a=response['nextExpectedRanges'][0];
-                                    asize=Number( a.slice(0,a.indexOf("-")) );
-                                    readblob(asize);
-                                }
-                            } } else readblob(asize);
-                        }
-                        xhr.send(binary);
-                    }
-                } else {
-                    if (window.location.pathname.indexOf('%23')>0||file.name.indexOf('%23')>0) {
-                        label.innerHTML='<font color="red">目录或文件名含有#，上传失败。</font>';
-                    } else {
-                        label.innerHTML='<font color="red">'+xhr2.responseText+'</font>';
-                    }
-                    uploadbuttonshow();
-                }
-            }
-        }
     }
 <?php   }
     } else if (getenv('admin')!='') if (getenv('adminloginpage')=='') { ?>
