@@ -344,8 +344,9 @@ function list_files($path)
             $ext = strtolower(substr($oldname, strrpos($oldname, '.')));
             $oldname = path_format(path_format($config['list_path'] . path_format($path)) . '/' . $oldname . '.scfupload' );
             $data = '{"name":"' . $_POST['filemd5'] . $ext . '"}';
-            echo $oldname .'<br>'. $data;
+            //echo $oldname .'<br>'. $data;
             $tmp = MSAPI('PATCH',$oldname,$data,$config['access_token']);
+            if ($tmp['stat']==409) echo MSAPI('DELETE',$oldname,'',$access_token)['body'];
             return output($tmp['body'],$tmp['stat']);
         }
         if ($_POST['action']=='upbigfile') return bigfileupload($path);
@@ -462,7 +463,7 @@ function bigfileupload($path)
     if (substr($path1,-1)=='/') $path1=substr($path1,0,-1);
     if ($_POST['upbigfilename']!=''&&$_POST['filesize']>0) {
         $fileinfo['name'] = $_POST['upbigfilename'];
-        if ($config['admin']) {
+        //if ($config['admin']) {
             $fileinfo['size'] = $_POST['filesize'];
             $fileinfo['lastModified'] = $_POST['lastModified'];
             $filename = spurlencode( $fileinfo['name'] );
@@ -475,16 +476,16 @@ function bigfileupload($path)
             //微软的过期时间只有20分钟，其实不用看过期时间，我过了14个小时，用昨晚的链接还可以接着继续上传，微软临时文件只要还在就可以续
                 if ( json_decode( curl_request($getoldupinfo['uploadUrl']), true)['@odata.context']!='' ) return output($getoldupinfo_j);
             }
-        } else {
-            $filename = spurlencode( $fileinfo['name'] ) . '.scfupload';
-        }
+        //} else {
+        if (!$config['admin'])    $filename = spurlencode( $fileinfo['name'] ) . '.scfupload';
+        //}
         $response=MSAPI('createUploadSession',path_format($path1 . '/' . $filename),'{"item": { "@microsoft.graph.conflictBehavior": "fail"  }}',$config['access_token']);
         $responsearry = json_decode($response['body'],true);
         if (isset($responsearry['error'])) return output($response['body'], $response['stat']);
-        if ($config['admin']) {
+        //if ($config['admin']) {
             $fileinfo['uploadUrl'] = $responsearry['uploadUrl'];
         echo MSAPI('PUT', path_format($path1 . '/' . $cachefilename), json_encode($fileinfo, JSON_PRETTY_PRINT), $config['access_token'])['body'];
-        }
+        //}
         return output($response['body'], $response['stat']);
     }
     return output('error', 400);
@@ -591,6 +592,9 @@ function adminoperate($path)
 
 function MSAPI($method, $path, $data = '', $access_token)
 {
+    echo $method .'
+'. $path .'
+'. $data;
     global $oauth;
     if (substr($path,0,7) == 'http://' or substr($path,0,8) == 'https://') {
         $url=$path;
@@ -852,7 +856,7 @@ function render_list($path, $files)
                         echo '
                         <iframe id="office-a" src="https://view.officeapps.live.com/op/view.aspx?src=' . urlencode($files['@microsoft.graph.downloadUrl']) . '" style="width: 100%;height: 800px" frameborder="0"></iframe>
 ';
-                    } elseif (in_array($ext, ['txt', 'sh', 'php', 'asp', 'js', 'html', 'c'])) {
+                    } elseif (in_array($ext, ['txt', 'sh', 'bat', 'php', 'asp', 'js', 'html', 'c'])) {
                         $txtstr = htmlspecialchars(curl_request($files['@microsoft.graph.downloadUrl']));
 ?>
                         <div id="txt">
@@ -1492,15 +1496,17 @@ function render_list($path, $files)
             xhr2.send(null);
             xhr2.onload = function(e){
                 if (xhr2.status==200) {
-                    var html=JSON.parse(xhr2.responseText);
-                    var a=html['nextExpectedRanges'][0];
-                    asize=Number( a.slice(0,a.indexOf("-")) );
+                    var html = JSON.parse(xhr2.responseText);
+                    var a = html['nextExpectedRanges'][0];
+                    newstartsize = Number( a.slice(0,a.indexOf("-")) );
                     StartTime = new Date();
-                    newstartsize = asize;
-                    if (asize==0) {
+<?php if ($config['admin']) { ?>
+                    asize = newstartsize;
+<?php } ?>
+                    if (newstartsize==0) {
                         StartStr='开始于：' +StartTime.toLocaleString()+'<br>' ;
                     } else {
-                        StartStr='上次上传'+size_format(asize)+ '<br>本次开始于：' +StartTime.toLocaleString()+'<br>' ;
+                        StartStr='上次上传'+size_format(newstartsize)+ '<br>本次开始于：' +StartTime.toLocaleString()+'<br>' ;
                     }
                     var chunksize=5*1024*1024; // 每小块上传大小，最大60M，微软建议10M
                     if (totalsize>200*1024*1024) chunksize=10*1024*1024;
@@ -1510,10 +1516,19 @@ function render_list($path, $files)
                         reader.readAsArrayBuffer(blob);
                     }
                     readblob(asize);
-                    <?php if (!$config['admin']) { ?>var spark = new SparkMD5.ArrayBuffer();<?php } ?>
+<?php if (!$config['admin']) { ?>
+                    var spark = new SparkMD5.ArrayBuffer();
+<?php } ?>
                     reader.onload = function(e){
                         var binary = this.result;
-                        <?php if (!$config['admin']) { ?>spark.append(binary);<?php } ?>
+<?php if (!$config['admin']) { ?>
+                        spark.append(binary);
+                        if (asize < newstartsize) {
+                            asize += chunksize;
+                            readblob(asize);
+                            return;
+                        }
+<?php } ?>
                         var xhr = new XMLHttpRequest();
                         xhr.open("PUT", url, true);
                         //xhr.setRequestHeader('x-requested-with','XMLHttpRequest');
@@ -1536,25 +1551,27 @@ function render_list($path, $files)
                                 var xhr3 = new XMLHttpRequest();
                                 xhr3.open("POST", '');
                                 xhr3.setRequestHeader('x-requested-with','XMLHttpRequest');
-<?php if (!$config['admin']) { ?>
-                                var filemd5 = spark.end();
-                                xhr3.send('action=uploaded_rename&filename='+encodeURIComponent(file.name)+'&filemd5='+filemd5);
+                                xhr3.send('action=del_upload_cache&filename=.'+file.lastModified+ '_' +file.size+ '_' +encodeURIComponent(file.name)+'.tmp');
                                 xhr3.onload = function(e){
                                     console.log(xhr3.responseText+','+xhr3.status);
+                                }
+<?php if (!$config['admin']) { ?>
+                                var xhr4 = new XMLHttpRequest();
+                                xhr4.open("POST", '');
+                                xhr4.setRequestHeader('x-requested-with','XMLHttpRequest');
+                                var filemd5 = spark.end();
+                                xhr4.send('action=uploaded_rename&filename='+encodeURIComponent(file.name)+'&filemd5='+filemd5);
+                                xhr4.onload = function(e){
+                                    console.log(xhr4.responseText+','+xhr4.status);
                                     var filename;
-                                    if (xhr3.status==200) filename = JSON.parse(xhr3.responseText)['name'];
-                                    if (xhr3.status==409) filename = filemd5 + file.name.substr(file.name.indexOf('.'));
+                                    if (xhr4.status==200) filename = JSON.parse(xhr4.responseText)['name'];
+                                    if (xhr4.status==409) filename = filemd5 + file.name.substr(file.name.indexOf('.'));
                                     if (filename=='') { alert('可能出错，重新上传'); return; }
                                     var lasturl = location.href;
                                     if (lasturl.substr(lasturl.length-1)!='/') lasturl += '/';
                                     lasturl += filename + '?preview';
                                     //alert(lasturl);
-                                    window.location = lasturl;
-                                }
-<?php } else { ?>
-                                xhr3.send('action=del_upload_cache&filename=.'+file.lastModified+ '_' +file.size+ '_' +encodeURIComponent(file.name)+'.tmp');
-                                xhr3.onload = function(e){
-                                    console.log(xhr3.responseText+','+xhr3.status);
+                                    window.open(lasturl);
                                 }
 <?php } ?>
                                 EndTime=new Date();
@@ -1567,7 +1584,9 @@ function render_list($path, $files)
                                 document.getElementById('upfile_td1_'+tdnum).innerHTML='<font color="green">'+document.getElementById('upfile_td1_'+tdnum).innerHTML+'<br>上传完成</font>';
                                 label.innerHTML=StartStr+MiddleStr;
                                 uploadbuttonshow();
-                                <?php if ($config['admin']) { ?>addelement(response);<?php } ?>
+<?php if ($config['admin']) { ?>
+                                addelement(response);
+<?php } ?>
                             } else {
                                 if (!response['nextExpectedRanges']) {
                                     label.innerHTML='<font color="red">'+xhr.responseText+'</font><br>';
