@@ -103,7 +103,7 @@ function main_handler($event, $context)
         $pos = strpos($cookievalues,"=");
         $_COOKIE[urldecode(substr($cookievalues,0,$pos))]=urldecode(substr($cookievalues,$pos+1));
     }
-    $referer = $event['headers']['referer'];
+    /*$referer = $event['headers']['referer'];
     $tmpurl = substr($referer,strpos($referer,'//')+2);
     $refererhost = substr($tmpurl,0,strpos($tmpurl,'/'));
     if ($refererhost==$host_name) {
@@ -111,7 +111,7 @@ function main_handler($event, $context)
         $config['current_url'] = substr($referer,0,strpos($referer,'//')) . '//' . $host_name.$_SERVER['PHP_SELF'];
     } else {
         $config['current_url'] = '';
-    }
+    }*/
 
     config_oauth();
     if (!$config['base_path']) {
@@ -400,7 +400,7 @@ function adminform($name = '', $pass = '', $path = '')
         $statusCode = 302;
         date_default_timezone_set('UTC');
         $header = [
-            'Set-Cookie' => $name.'='.$pass.'; expires='.date(DATE_COOKIE,strtotime('+1hour')),
+            'Set-Cookie' => $name.'='.$pass.'; path=/; expires='.date(DATE_COOKIE,strtotime('+1hour')),
             'Location' => $path,
             'Content-Type' => 'text/html'
         ];
@@ -840,7 +840,7 @@ function render_list($path, $files)
                         echo '
                         <img src="' . $files['@microsoft.graph.downloadUrl'] . '" alt="' . substr($path, strrpos($path, '/')) . '" onload="if(this.offsetWidth>document.getElementById(\'url\').offsetWidth) this.style.width=\'100%\';" />
 ';
-                    } elseif (in_array($ext, ['mp4', 'webm', 'mkv', 'flv', 'blv', 'avi', 'wmv', 'ogg'])) {
+                    } elseif (in_array($ext, ['mp4', 'mov', 'webm', 'mkv', 'flv', 'blv', 'avi', 'wmv', 'ogg'])) {
                     //echo '<video src="' . $files['@microsoft.graph.downloadUrl'] . '" controls="controls" style="width: 100%"></video>';
                         $DPvideo=$files['@microsoft.graph.downloadUrl'];
                         echo '<div id="video-a0"></div>';
@@ -1144,7 +1144,6 @@ function render_list($path, $files)
 <?php if (isset($files['folder']) && $config['is_imgup_path']) { ?><script type="text/javascript" src="//cdn.bootcss.com/spark-md5/3.0.0/spark-md5.min.js"></script><?php } ?>
 <script type="text/javascript">
     var root = '<?php echo $config["base_path"]; ?>';
-    var sort=0;
     function path_format(path) {
         path = '/' + path + '/';
         while (path.indexOf('//') !== -1) {
@@ -1168,6 +1167,88 @@ function render_list($path, $files)
     if ($readme) {
         $readme.innerHTML = marked(document.getElementById('readme-md').innerText)
     }
+<?php if ($_GET['preview']) { //在预览时处理 ?>
+    var $url = document.getElementById('url');
+    if ($url) {
+        $url.innerHTML = location.protocol + '//' + location.host + $url.innerHTML;
+        $url.style.height = $url.scrollHeight + 'px';
+    }
+    var $officearea=document.getElementById('office-a');
+    if ($officearea) {
+        $officearea.style.height = window.innerHeight + 'px';
+    }
+    var $textarea=document.getElementById('txt-a');
+    if ($textarea) {
+        $textarea.style.height = $textarea.scrollHeight + 'px';
+    }
+<?php   if (!!$DPvideo) { ?>
+    function loadResources(type, src, callback) {
+        let script = document.createElement(type);
+        let loaded = false;
+        if (typeof callback === 'function') {
+            script.onload = script.onreadystatechange = () => {
+                if (!loaded && (!script.readyState || /loaded|complete/.test(script.readyState))) {
+                    script.onload = script.onreadystatechange = null;
+                    loaded = true;
+                    callback();
+                }
+            }
+        }
+        if (type === 'link') {
+            script.href = src;
+            script.rel = 'stylesheet';
+        } else {
+            script.src = src;
+        }
+        document.getElementsByTagName('head')[0].appendChild(script);
+    }
+    function addVideos(videos) {
+        let host = 'https://s0.pstatp.com/cdn/expire-1-M';
+        let unloadedResourceCount = 4;
+        let callback = (() => {
+            return () => {
+                if (!--unloadedResourceCount) {
+                    createDplayers(videos);
+                }
+            };
+        })(unloadedResourceCount, videos);
+        loadResources(
+            'link',
+            host + '/dplayer/1.25.0/DPlayer.min.css',
+            callback
+        );
+        loadResources(
+            'script',
+            host + '/dplayer/1.25.0/DPlayer.min.js',
+            callback
+        );
+        loadResources(
+            'script',
+            host + '/hls.js/0.12.4/hls.light.min.js',
+            callback
+        );
+        loadResources(
+            'script',
+            host + '/flv.js/1.5.0/flv.min.js',
+            callback
+        );
+    }
+    function createDplayers(videos) {
+        for (i = 0; i < videos.length; i++) {
+            console.log(videos[i]);
+            new DPlayer({
+                container: document.getElementById('video-a' + i),
+                screenshot: true,
+                video: {
+                    url: videos[i]
+                }
+            });
+        }
+    }
+    addVideos(['<?php echo $DPvideo;?>']);
+<?php   }
+    } else { ?>
+    var sort=0;
     function showthumbnails(obj) {
         var files=document.getElementsByName('filelist');
         for ($i=0;$i<files.length;$i++) {
@@ -1281,7 +1362,7 @@ function render_list($path, $files)
         if (str.substr(-2)==' B') num=str.substr(0,str.length-2);
         return num;
     }
-<?php
+<?php }
     /*if ($config['ishidden']==2) { //有密码写目录密码 ?>
     var $ishidden = '<?php echo $config['ishidden']; ?>';
     var $hiddenpass = '<?php echo md5($_POST['password1']);?>';
@@ -1298,7 +1379,7 @@ function render_list($path, $files)
     var expd = new Date();
     expd.setTime(expd.getTime()+(2*60*60*1000));
     var expires = "expires="+expd.toGMTString();
-    document.cookie="timezone="+timezone+";"+expires;
+    document.cookie="timezone="+timezone+"; path=/; "+expires;
     if (timezone!='8') {
         alert('Your timezone is '+timezone+', reload local timezone.');
         location.href=location.protocol + "//" + location.host + "<?php echo path_format($config['base_path'] . '/' . $path );?>" ;
@@ -1310,87 +1391,6 @@ function render_list($path, $files)
         document.getElementById('nextpageform').submit();
     }
 <?php }
-    if ($_GET['preview']) { //在预览时处理 ?>
-    var $url = document.getElementById('url');
-    if ($url) {
-        $url.innerHTML = location.protocol + '//' + location.host + $url.innerHTML;
-        $url.style.height = $url.scrollHeight + 'px';
-    }
-    var $officearea=document.getElementById('office-a');
-    if ($officearea) {
-        $officearea.style.height = window.innerHeight + 'px';
-    }
-    var $textarea=document.getElementById('txt-a');
-    if ($textarea) {
-        $textarea.style.height = $textarea.scrollHeight + 'px';
-    }
-<?php   if (!!$DPvideo) { ?>
-    function loadResources(type, src, callback) {
-        let script = document.createElement(type);
-        let loaded = false;
-        if (typeof callback === 'function') {
-            script.onload = script.onreadystatechange = () => {
-                if (!loaded && (!script.readyState || /loaded|complete/.test(script.readyState))) {
-                    script.onload = script.onreadystatechange = null;
-                    loaded = true;
-                    callback();
-                }
-            }
-        }
-        if (type === 'link') {
-            script.href = src;
-            script.rel = 'stylesheet';
-        } else {
-            script.src = src;
-        }
-        document.getElementsByTagName('head')[0].appendChild(script);
-    }
-    function addVideos(videos) {
-        let host = 'https://s0.pstatp.com/cdn/expire-1-M';
-        let unloadedResourceCount = 4;
-        let callback = (() => {
-            return () => {
-                if (!--unloadedResourceCount) {
-                    createDplayers(videos);
-                }
-            };
-        })(unloadedResourceCount, videos);
-        loadResources(
-            'link',
-            host + '/dplayer/1.25.0/DPlayer.min.css',
-            callback
-        );
-        loadResources(
-            'script',
-            host + '/dplayer/1.25.0/DPlayer.min.js',
-            callback
-        );
-        loadResources(
-            'script',
-            host + '/hls.js/0.12.4/hls.light.min.js',
-            callback
-        );
-        loadResources(
-            'script',
-            host + '/flv.js/1.5.0/flv.min.js',
-            callback
-        );
-    }
-    function createDplayers(videos) {
-        for (i = 0; i < videos.length; i++) {
-            console.log(videos[i]);
-            new DPlayer({
-                container: document.getElementById('video-a' + i),
-                screenshot: true,
-                video: {
-                    url: videos[i]
-                }
-            });
-        }
-    }
-    addVideos(['<?php echo $DPvideo;?>']);
-<?php   } 
-    }
     if (getenv('admin')!='') { //有登录或操作，需要关闭DIV时 ?>
     function operatediv_close(operate) {
         document.getElementById(operate+'_div').style.display='none';
