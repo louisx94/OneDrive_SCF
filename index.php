@@ -13,7 +13,7 @@ public_path    ：使用API长链接访问时，显示网盘文件的路径，�
 private_path   ：使用自定义域名访问时，显示网盘文件的路径，不设置时默认为根目录。  
 domain_path    ：格式为a1.com=/dir/path1&b1.com=/path2，比private_path优先。  
 imgup_path     ：设置图床路径，不设置这个值时该目录内容会正常列文件出来，设置后只有上传界面，不显示其中文件（登录后显示）。  
-passfile       ：自定义密码文件的名字，可以是'.password'，也可以是'aaaa.txt'等等；  
+passfile       ：自定义密码文件的名字，可以是'pppppp'，也可以是'aaaa.txt'等等；  
         　       密码是这个文件的内容，可以空格、可以中文；列目录时不会显示，只有知道密码才能查看或下载此文件。  
 t1,t2,t3,t4,t5,t6,t7：把refresh_token按128字节切开来放在环境变量，方便更新版本。  
 */
@@ -103,15 +103,6 @@ function main_handler($event, $context)
         $pos = strpos($cookievalues,"=");
         $_COOKIE[urldecode(substr($cookievalues,0,$pos))]=urldecode(substr($cookievalues,$pos+1));
     }
-    /*$referer = $event['headers']['referer'];
-    $tmpurl = substr($referer,strpos($referer,'//')+2);
-    $refererhost = substr($tmpurl,0,strpos($tmpurl,'/'));
-    if ($refererhost==$host_name) {
-        // 仅游客上传用，referer不对就空值，无法上传
-        $config['current_url'] = substr($referer,0,strpos($referer,'//')) . '//' . $host_name.$_SERVER['PHP_SELF'];
-    } else {
-        $config['current_url'] = '';
-    }*/
 
     config_oauth();
     if (!$config['base_path']) {
@@ -388,14 +379,6 @@ function adminform($name = '', $pass = '', $path = '')
     $statusCode = 401;
     $html = '<html><head><title>管理登录</title><meta charset=utf-8></head>';
     if ($name!=''&&$pass!='') {
-        /*$html .= '<script type="text/javascript">
-            var expd = new Date();
-            expd.setTime(expd.getTime()+(1*60*60*1000));
-            var expires = "expires="+expd.toGMTString();
-            document.cookie="'.$name.'='.$pass.';"+expires;
-            //path='.$path.';
-            location.href=location.protocol + "//" + location.host + "'.$path.'";
-</script>';*/
         $html .= '<body>登录成功，正在跳转</body></html>';
         $statusCode = 302;
         date_default_timezone_set('UTC');
@@ -405,7 +388,6 @@ function adminform($name = '', $pass = '', $path = '')
             'Content-Type' => 'text/html'
         ];
         return output($html,$statusCode,$header);
-        // return $name.'='.$pass.'; expires='.date(DATE_COOKIE,strtotime('+1hour'));
     }
     $html .= '
     <body>
@@ -424,80 +406,13 @@ function adminform($name = '', $pass = '', $path = '')
     $html .= '</body></html>';
     return output($html,$statusCode);
 }
-/*
-function guestupload($path)
-{
-    global $config;
-    $path1 = path_format($config['list_path'] . path_format($path));
-    if (substr($path1,-1)=='/') $path1=substr($path1,0,-1);
-    if ($_POST['guest_upload_filecontent']!=''&&$_POST['upload_filename']!='') if ($config['current_url']!='') {
-        $data = substr($_POST['guest_upload_filecontent'],strpos($_POST['guest_upload_filecontent'],'base64')+strlen('base64,'));
-        $data = base64_decode($data);
-            // 重命名为MD5加后缀
-        $filename = spurlencode($_POST['upload_filename']);
-        $ext = strtolower(substr($filename, strrpos($filename, '.')));
-        $tmpfilename = "/tmp/".date("Ymd-His")."-".$filename;
-        $tmpfile=fopen($tmpfilename,'wb');
-        fwrite($tmpfile,$data);
-        fclose($tmpfile);
-        $filename = md5_file($tmpfilename) . $ext;
-        $locationurl = $config['current_url'] . '/' . $filename . '?preview';
-        $response=MSAPI('createUploadSession',path_format($path1 . '/' . $filename),'{"item": { "@microsoft.graph.conflictBehavior": "fail"  }}',$config['access_token']);
-        $responsearry=json_decode($response['body'],true);
-        if (isset($responsearry['error'])) return message($responsearry['error']['message']. '<hr><a href="' . $locationurl .'">' . $filename . '</a><br><a href="javascript:history.back(-1)">上一页</a>','错误',$response['stat']);
-        $uploadurl=$responsearry['uploadUrl'];
-        $result = MSAPI('PUT',$uploadurl,$data,$config['access_token'])['body'];
-        echo $result;
-        $resultarry = json_decode($result,true);
-        if (isset($resultarry['error'])) return message($resultarry['error']['message']. '<hr><a href="javascript:history.back(-1)">上一页</a>','错误',403);
-        return output('', 302, [ 'Location' => $locationurl ]);
-    } else {
-        return message('Please upload from source site!');
-    }
-}
-*/
+
 function bigfileupload($path)
 {
     global $config;
     $path1 = path_format($config['list_path'] . path_format($path));
     if (substr($path1,-1)=='/') $path1=substr($path1,0,-1);
     if ($_POST['upbigfilename']!=''&&$_POST['filesize']>0) {
-        $fileinfo['name'] = $_POST['upbigfilename'];
-        //if ($config['admin']) {
-            $fileinfo['size'] = $_POST['filesize'];
-            $fileinfo['lastModified'] = $_POST['lastModified'];
-            $filename = spurlencode( $fileinfo['name'] );
-            $cachefilename = '.' . $fileinfo['lastModified'] . '_' . $fileinfo['size'] . '_' . $filename . '.tmp';
-            $getoldupinfo=fetch_files(path_format($path . '/' . $cachefilename));
-        //echo json_encode($getoldupinfo, JSON_PRETTY_PRINT);
-            if (isset($getoldupinfo['file'])&&$getoldupinfo['size']<5120) {
-                $getoldupinfo_j = curl_request($getoldupinfo['@microsoft.graph.downloadUrl']);
-                $getoldupinfo = json_decode($getoldupinfo_j , true);
-            //微软的过期时间只有20分钟，其实不用看过期时间，我过了14个小时，用昨晚的链接还可以接着继续上传，微软临时文件只要还在就可以续
-                if ( json_decode( curl_request($getoldupinfo['uploadUrl']), true)['@odata.context']!='' ) return output($getoldupinfo_j);
-            }
-        //} else {
-        if (!$config['admin'])    $filename = spurlencode( $fileinfo['name'] ) . '.scfupload';
-        //}
-        $response=MSAPI('createUploadSession',path_format($path1 . '/' . $filename),'{"item": { "@microsoft.graph.conflictBehavior": "fail"  }}',$config['access_token']);
-        $responsearry = json_decode($response['body'],true);
-        if (isset($responsearry['error'])) return output($response['body'], $response['stat']);
-        //if ($config['admin']) {
-            $fileinfo['uploadUrl'] = $responsearry['uploadUrl'];
-        echo MSAPI('PUT', path_format($path1 . '/' . $cachefilename), json_encode($fileinfo, JSON_PRETTY_PRINT), $config['access_token'])['body'];
-        //}
-        return output($response['body'], $response['stat']);
-    }
-    return output('error', 400);
-}
-
-function adminoperate($path)
-{
-    global $config;
-    $path1 = path_format($config['list_path'] . path_format($path));
-    if (substr($path1,-1)=='/') $path1=substr($path1,0,-1);
-    $tmparr['statusCode'] = 0;
-    /*if ($_POST['upbigfilename']!=''&&$_POST['filesize']>0) {
         $fileinfo['name'] = $_POST['upbigfilename'];
         $fileinfo['size'] = $_POST['filesize'];
         $fileinfo['lastModified'] = $_POST['lastModified'];
@@ -511,13 +426,23 @@ function adminoperate($path)
             //微软的过期时间只有20分钟，其实不用看过期时间，我过了14个小时，用昨晚的链接还可以接着继续上传，微软临时文件只要还在就可以续
             if ( json_decode( curl_request($getoldupinfo['uploadUrl']), true)['@odata.context']!='' ) return output($getoldupinfo_j);
         }
+        if (!$config['admin'])    $filename = spurlencode( $fileinfo['name'] ) . '.scfupload';
         $response=MSAPI('createUploadSession',path_format($path1 . '/' . $filename),'{"item": { "@microsoft.graph.conflictBehavior": "fail"  }}',$config['access_token']);
         $responsearry = json_decode($response['body'],true);
         if (isset($responsearry['error'])) return output($response['body'], $response['stat']);
         $fileinfo['uploadUrl'] = $responsearry['uploadUrl'];
         echo MSAPI('PUT', path_format($path1 . '/' . $cachefilename), json_encode($fileinfo, JSON_PRETTY_PRINT), $config['access_token'])['body'];
         return output($response['body'], $response['stat']);
-    }*/
+    }
+    return output('error', 400);
+}
+
+function adminoperate($path)
+{
+    global $config;
+    $path1 = path_format($config['list_path'] . path_format($path));
+    if (substr($path1,-1)=='/') $path1=substr($path1,0,-1);
+    $tmparr['statusCode'] = 0;
     if ($_POST['rename_newname']!=$_POST['rename_oldname'] && $_POST['rename_newname']!='') {
         // 重命名
         $oldname = spurlencode($_POST['rename_oldname']);
@@ -592,9 +517,6 @@ function adminoperate($path)
 
 function MSAPI($method, $path, $data = '', $access_token)
 {
-    echo $method .'
-'. $path .'
-'. $data;
     global $oauth;
     if (substr($path,0,7) == 'http://' or substr($path,0,8) == 'https://') {
         $url=$path;
@@ -811,11 +733,6 @@ function render_list($path, $files)
     if ($config['is_imgup_path']&&!$config['admin']) { ?>
                 <div id="upload_div" style="margin:10px">
                 <center>
-                    <!--<form action="" method="POST">
-                    <input id="upload_content" type="hidden" name="guest_upload_filecontent">
-                    <input id="upload_file" type="file" name="upload_filename" onchange="base64upfile()">
-                    <input type="submit" value="上传">文件大小<4M，不然传输失败！
-                    </form>-->
                     <input id="upload_file" type="file" name="upload_filename">
                     <input id="upload_submit" onclick="preup();" value="上传" type="button">
                 <center>
@@ -883,11 +800,10 @@ function render_list($path, $files)
                     $filenum = $_POST['filenum'];
                     if (!$filenum and $files['folder']['page']) $filenum = ($files['folder']['page']-1)*200;
                     $readme = false; ?>
-                <div id="thumbnailsbutton" style="position:absolute;"><input type="button" value="图片缩略图" onclick="showthumbnails(this);"></div>
                 <table class="list-table" id="list-table">
                     <tr id="tr0">
                         <!--<th class="updated_at" width="5%">序号</th>-->
-                        <th class="file" width="60%" onclick="sortby('a');">文件</th>
+                        <th class="file" width="60%" onclick="sortby('a');">文件&nbsp;&nbsp;&nbsp;<input type="button" value="图片缩略" onclick="showthumbnails(this);"></th>
                         <th class="updated_at" width="25%" onclick="sortby('time');">修改时间</th>
                         <th class="size" width="15%" onclick="sortby('size');">大小</th>
                     </tr>
@@ -901,9 +817,7 @@ function render_list($path, $files)
                         <!--<td class="updated_at"><?php echo $filenum;?></td>-->
                         <td class="file">
                             <ion-icon name="folder"></ion-icon>
-                            <a id="file_a<?php echo $filenum;?>" href="<?php echo path_format($config['base_path'] . '/' . $path . '/' . encode_str_replace($file['name']) . '/'); ?>"><?php echo str_replace('&','&amp;', $file['name']);?></a>
-<?php                       if ($config['admin']) {?>
-                            &nbsp;&nbsp;&nbsp;
+<?php                       if ($config['admin']) { ?>
                             <li class="operate">管理
                             <ul>
                                 <li><a onclick="showdiv(event,'encrypt',<?php echo $filenum;?>);">加密</a></li>
@@ -911,8 +825,9 @@ function render_list($path, $files)
                                 <li><a onclick="showdiv(event, 'move',<?php echo $filenum;?>);">移动</a></li>
                                 <li><a onclick="showdiv(event, 'delete',<?php echo $filenum;?>);">删除</a></li>
                             </ul>
-                            </li>
-<?php                       }?>
+                            </li>&nbsp;&nbsp;&nbsp;
+<?php                       } ?>
+                            <a id="file_a<?php echo $filenum;?>" href="<?php echo path_format($config['base_path'] . '/' . $path . '/' . encode_str_replace($file['name']) . '/'); ?>"><?php echo str_replace('&','&amp;', $file['name']);?></a>
                         </td>
                         <td class="updated_at" id="folder_time<?php echo $filenum;?>"><?php echo time_format($file['lastModifiedDateTime']); ?></td>
                         <td class="size" id="folder_size<?php echo $filenum;?>"><?php echo size_format($file['size']); ?></td>
@@ -933,18 +848,17 @@ function render_list($path, $files)
                         <!--<td class="updated_at"><?php echo $filenum;?></td>-->
                         <td class="file">
                             <ion-icon name="document"></ion-icon>
-                            <a id="file_a<?php echo $filenum;?>" name="filelist" href="<?php echo path_format($config['base_path'] . '/' . $path . '/' . encode_str_replace($file['name'])); ?>?preview" target=_blank><?php echo str_replace('&','&amp;', $file['name']); ?></a>
-                            <a href="<?php echo path_format($config['base_path'] . '/' . $path . '/' . str_replace('&','&amp;', $file['name']));?>"><ion-icon name="download"></ion-icon></a>
-<?php                           if ($config['admin']) {?>
-                            &nbsp;&nbsp;&nbsp;
+<?php                           if ($config['admin']) { ?>
                             <li class="operate">管理
                             <ul>
                                 <li><a onclick="showdiv(event, 'rename',<?php echo $filenum;?>);">重命名</a></li>
                                 <li><a onclick="showdiv(event, 'move',<?php echo $filenum;?>);">移动</a></li>
                                 <li><a onclick="showdiv(event, 'delete',<?php echo $filenum;?>);">删除</a></li>
                             </ul>
-                            </li>
-<?php                           }?>
+                            </li>&nbsp;&nbsp;&nbsp;
+<?php                           } ?>
+                            <a id="file_a<?php echo $filenum;?>" name="filelist" href="<?php echo path_format($config['base_path'] . '/' . $path . '/' . encode_str_replace($file['name'])); ?>?preview" target=_blank><?php echo str_replace('&','&amp;', $file['name']); ?></a>
+                            <a href="<?php echo path_format($config['base_path'] . '/' . $path . '/' . str_replace('&','&amp;', $file['name']));?>"><ion-icon name="download"></ion-icon></a>
                         </td>
                         <td class="updated_at" id="file_time<?php echo $filenum;?>"><?php echo time_format($file['lastModifiedDateTime']); ?></td>
                         <td class="size" id="file_size<?php echo $filenum;?>"><?php echo size_format($file['size']); ?></td>
@@ -1256,7 +1170,7 @@ function render_list($path, $files)
             if (str.substr(-1)==' ') str=str.substr(0,str.length-1);
             if (!str) return;
             strarry=str.split('.');
-            ext=strarry[strarry.length-1];
+            ext=strarry[strarry.length-1].toLowerCase();
             images = ['ico', 'bmp', 'gif', 'jpg', 'jpeg', 'jpe', 'jfif', 'tif', 'tiff', 'png', 'heic', 'webp'];
             if (images.indexOf(ext)>-1) get_thumbnails_url(str, files[$i]);
         }
@@ -1282,8 +1196,6 @@ function render_list($path, $files)
             sort=0;
             return;
         } else return;
-        // if (string=='time' && sort==1) return;
-        // if (string=='size' && sort==2) return;
         sort1=sort;
         sortby('a');
         sort=sort1;
@@ -1363,16 +1275,6 @@ function render_list($path, $files)
         return num;
     }
 <?php }
-    /*if ($config['ishidden']==2) { //有密码写目录密码 ?>
-    var $ishidden = '<?php echo $config['ishidden']; ?>';
-    var $hiddenpass = '<?php echo md5($_POST['password1']);?>';
-    if ($ishidden==2) {
-        var expd = new Date();
-        expd.setTime(expd.getTime()+(2*60*60*1000));
-        var expires = "expires="+expd.toGMTString();
-        document.cookie="password="+$hiddenpass+";"+expires;
-    }
-<?php }*/
     if ($_COOKIE['timezone']=='') { //无时区写时区 ?>
     var nowtime= new Date();
     var timezone = 0-nowtime.getTimezoneOffset()/60;
@@ -1413,6 +1315,10 @@ function render_list($path, $files)
     function preup() {
         uploadbuttonhide();
         var files=document.getElementById('upload_file').files;
+        if (files.length<1) {
+            uploadbuttonshow();
+            return;
+        }
         var table1=document.createElement('table');
         document.getElementById('upload_div').appendChild(table1);
         table1.setAttribute('class','list-table');
@@ -1613,11 +1519,8 @@ function render_list($path, $files)
 <?php }
     if ($config['admin']) { //管理登录后 ?>
     function logout() {
-        var expd = new Date();
-        expd.setTime(expd.getTime()-(60*1000));
-        var expires = "expires="+expd.toGMTString();
-        document.cookie="<?php echo $config['function_name'];?>='';"+expires;
-        location.href=location.protocol + "//" + location.host + "<?php echo path_format($config['base_path'].str_replace('&amp;','&',$path));?>";
+        document.cookie = "<?php echo $config['function_name'] . 'admin';?>=; path=/";
+        location.href = location.href;
     }
     function enableedit(obj) {
         document.getElementById('txt-a').readOnly=!document.getElementById('txt-a').readOnly;
@@ -1625,7 +1528,7 @@ function render_list($path, $files)
         obj.innerHTML=(obj.innerHTML=='取消编辑')?'点击后编辑':'取消编辑';
         document.getElementById('txt-save').style.display=document.getElementById('txt-save').style.display==''?'none':'';
     }
-<?php   if (!$_GET['preview']) {?>
+<?php   if (!$_GET['preview']) { ?>
     function showdiv(event,action,num) {
         var $operatediv=document.getElementsByName('operatediv');
         for ($i=0;$i<$operatediv.length;$i++) {
