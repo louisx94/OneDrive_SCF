@@ -1,5 +1,5 @@
 # Turn to  
-转到另一个项目：  
+# 转到SCF、Heroku、VPS三合一项目：  
 https://github.com/qkqpttgf/OneManager-php  
 
 # OneDrive_SCF
@@ -9,9 +9,6 @@ API网关跟SCF分开收费，每小时不足0.01元就不产生帐单。
 所以，如果自用的话，**可能可以一直免费用下去**。  
 用户比较多的话，或被人DDCC，就产生费用了。  
 充值一块钱先用着吧，被人DDCC了也就1块，扣完结束。  
-
-最新更新：(https://github.com/qkqpttgf/OneDrive_SCF)  
-QQ群：943919989  
 
 # Demo
 目前游客可以上传大文件：  
