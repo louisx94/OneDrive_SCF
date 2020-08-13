@@ -1,7 +1,4 @@
-# Turn to  
-# 转到SCF、Heroku、VPS三合一程序：  
+# 转到 N平台 程序：  
 https://github.com/qkqpttgf/OneManager-php  
 
-<script>
-  location.href="https://github.com/qkqpttgf/OneManager-php";
-</script>
+支持 Heroku、腾讯SCF、阿里FC、华为FG、百度CFC、普通VPS。
